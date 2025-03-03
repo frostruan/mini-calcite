@@ -24,4 +24,12 @@ public class Field {
     public boolean matchesName(Identifier.ColumnName columnName) {
         return name.getId().equalsIgnoreCase(columnName.getId());
     }
+
+    public Field withTableName(Identifier.TableName newTableName) {
+        return new Field(name, type, newTableName, originExpression);
+    }
+
+    public Field withTableName(String newTableName) {
+        return withTableName(new Identifier.TableName(newTableName));
+    }
 }

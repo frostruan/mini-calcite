@@ -6,8 +6,6 @@ import com.huiruan.calcite.parser.SQLNode;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.util.function.Supplier;
-
 @Getter
 public final class Scope {
     public static final Scope ROOT = new Scope(null, null);

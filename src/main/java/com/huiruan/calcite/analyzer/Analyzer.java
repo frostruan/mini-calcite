@@ -1,130 +1,89 @@
 package com.huiruan.calcite.analyzer;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.huiruan.calcite.catalog.Catalog;
 import com.huiruan.calcite.catalog.Database;
 import com.huiruan.calcite.catalog.Field;
 import com.huiruan.calcite.catalog.Table;
-import com.huiruan.calcite.expression.ExpressionUtils;
-import com.huiruan.calcite.expression.Identifier;
-import com.huiruan.calcite.expression.Predicate;
+import com.huiruan.calcite.expression.*;
 import com.huiruan.calcite.parser.SQLNode;
-import com.huiruan.calcite.parser.SQLNode.QueryStmt;
-import com.huiruan.calcite.parser.SQLNode.JoinClause;
 import com.huiruan.calcite.parser.SQLNode.SelectStmt;
-import com.huiruan.calcite.parser.SQLNode.RelationClause;
-import com.huiruan.calcite.parser.SQLNode.TableReference;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class Analyzer {
 
     private Analyzer() {}
 
-    public static void analyze(QueryStmt queryStmt, Catalog catalog) {
-        Validator validator = new Validator(catalog);
-        Scope scope = validator.validate(queryStmt, Scope.ROOT);
+    public static void analyze(SelectStmt selectStmt, Catalog catalog) {
+        Analyzer analyzer = new Analyzer();
+        analyzer.transformSelectStmt(selectStmt, null);
     }
 
-    private static final class Validator extends AstVisitor<Scope, Scope> {
-        private final Catalog catalog;
+    public void transformSelectStmt(SelectStmt stmt, Scope parent) {
+        Scope sourceScope = analyzeFrom(stmt, parent);
+        sourceScope.setParent(parent);
 
-        private Validator(Catalog catalog) {
-            this.catalog = catalog;
+        analyzeWhere(stmt, sourceScope);
+
+        List<Expression> outputExpressions = analyzeSelect(stmt, sourceScope);
+
+        Scope outputScope = computeAndAssignOutputScope(stmt, sourceScope);
+
+        List<Expression> groupByExpressions = analyzeGroupBy(stmt, sourceScope, outputScope, outputExpressions);
+        if (stmt.isDistinct()) {
+            groupByExpressions.addAll(outputExpressions);
         }
 
-        public Scope validate(SQLNode node, Scope scope) {
-            return node.accept(this, scope);
-        }
+        analyzeHaving(stmt, sourceScope, outputScope, outputExpressions);
 
-        @Override
-        public Scope visitQueryStatement(QueryStmt queryStmt, Scope context) {
-            return super.visitQueryStatement(queryStmt, context);
-        }
+        Scope sourceAndOutputScope = computeAndAssignOrderScope(sourceScope, outputScope);
 
-        @Override
-        public Scope visitSelectStmt(SelectStmt selectStmt, Scope parent) {
-            Scope sourceScope = visitRelationClause(selectStmt.getRelationClause(), parent);
-            sourceScope.setParent(parent);
-            return super.visitSelectStmt(selectStmt, parent);
-        }
+        List<SQLNode.OrderByItem> orderByElements = analyzeOrderBy(stmt, sourceAndOutputScope, outputExpressions);
+        List<Expression> orderByExpressions =
+                orderByElements.stream().map(SQLNode.OrderByItem::getExpression).collect(Collectors.toList());
 
-        @Override
-        public Scope visitRelationClause(RelationClause relationClause, Scope context) {
-            TableReference tableRef = relationClause.getTableRef();
-            Scope scope = visitTableReference(tableRef, context);
+        List<FunctionCall> aggregates = analyzeAggregations(sourceScope, orderByExpressions);
 
-            List<JoinClause> joinClauses = relationClause.getJoinClauses();
-            if (joinClauses.isEmpty()) {
-                return scope;
-            } else {
-                if (tableRef.isSubQuery()) {
-                    throw new AnalysisException("SubQuery on JOIN is not supported");
-                }
-                Relation.JoinRelation joinRelation = null;
-                Relation leftTable = scope.getRelation();
-                for (JoinClause joinClause : joinClauses) {
-                    TableReference rightTableRef = joinClause.getRightTable();
-                    if (rightTableRef.isSubQuery()) {
-                        throw new AnalysisException("SubQuery on JOIN is not supported");
-                    }
-                    Relation rightTable = visitTableReference(rightTableRef, context).getRelation();
-                    joinRelation = new Relation.JoinRelation(leftTable, rightTable,
-                            joinClause.getJoinType(), joinClause.getCondition());
-                    leftTable = joinRelation;
-                }
-                return new Scope(context, joinRelation);
-            }
-        }
+        analyzeLimitClause(stmt);
+    }
 
-        @Override
-        public Scope visitTableReference(TableReference tableRef, Scope parent) {
-            Relation tableRelation;
-            if (tableRef.isSubQuery()) {
-                Scope outerScope = visitQueryStatement(tableRef.getQueryStmt(), Scope.ROOT);
-                Relation subQuery = new Relation.SubQueryRelation(
-                        outerScope.getRelation().getAllFields(), tableRef.getTableAlias().getId());
-                return new Scope(parent, subQuery);
-            } else {
-                Identifier.TableName tableName = tableRef.getTableName();
-                Table table = resolveTable(tableName, catalog);
-                List<Field> fieldList = table.getFields();
-                tableRelation = new Relation.TableRelation(fieldList, tableName, tableRef.getTableAlias());
-                return new Scope(parent, tableRelation);
-            }
-        }
+    private Scope analyzeFrom(SelectStmt stmt, Scope parent) { return null; }
 
-        private Table resolveTable(Identifier.TableName tableName, Catalog catalog) {
-            String dbName = ExpressionUtils.getDatabase(tableName);
-            Database db = catalog.getDatabase(dbName);
-            if (db == null) {
-                throw new AnalysisException(
-                        String.format("db %s not found in default_catalog: table=%s",
-                                dbName, tableName));
-            }
-            Table table = db.getTable(tableName);
-            if (table == null) {
-                throw new AnalysisException(
-                        String.format("table %s not found in db %s", tableName, dbName));
-            }
-            return table;
-        }
+    private void analyzeWhere(SelectStmt stmt, Scope scope) {}
 
-        private void analyzeWhere(SelectStmt selectStmt, Scope context) {
-            Predicate whereCondition = selectStmt.getWhereExpr();
-            if (whereCondition == null) {
-                return;
-            }
+    private List<Expression> analyzeSelect(SelectStmt selectStmt, Scope scope) {
+        return Lists.newArrayList();
+    }
 
-        }
+    private Scope computeAndAssignOutputScope(SelectStmt stmt, Scope scope) {
+        return null;
+    }
 
-        @Override
-        public Scope visitColumnItem(SQLNode.ColumnItem columnItem, Scope context) {
-            return null;
-        }
+    private List<Expression> analyzeGroupBy(SelectStmt node, Scope sourceScope, Scope outputScope,
+                                            List<Expression> outputExpressions) {
+        return Lists.newArrayList();
+    }
 
-        private void recursivelyAnalyze() {
+    private void analyzeHaving(SelectStmt node, Scope sourceScope,
+                               Scope outputScope, List<Expression> outputExpressions) {}
 
-        }
+    private Scope computeAndAssignOrderScope(Scope sourceScope, Scope outputScope) {return null;}
+
+    private List<SQLNode.OrderByItem> analyzeOrderBy(SelectStmt node, Scope orderByScope,
+                                                     List<Expression> outputExpressions) {
+        return Lists.newArrayList();
+    }
+
+    private List<FunctionCall> analyzeAggregations(Scope sourceScope, List<Expression> outputAndOrderByExpressions) {
+        return Lists.newArrayList();
+    }
+
+    private void analyzeLimitClause(SelectStmt stmt) {
     }
 
     public static final class AnalysisException extends RuntimeException {
